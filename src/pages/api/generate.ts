@@ -50,6 +50,10 @@ export default async function handler(
     // Upload the downloaded file to AssemblyAI
     const uploadResp = await fetch('https://api.assemblyai.com/v2/upload', {
       method: 'POST',
+      // Node.js fetch requires the duplex option when streaming the body.
+      // Without this option the request will throw an error like:
+      // "RequestInit: duplex option is required when sending a body".
+      duplex: 'half',
       headers: {
         authorization: apiKey,
       },
