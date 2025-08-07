@@ -1,33 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createReadStream, existsSync, unlinkSync } from 'fs';
-import path from 'path';
-import os from 'os';
-// Use the @distube patched version of ytdl-core.  The standard ytdl-core
-// library relies on deprecated YouTube endpoints (get_video_info) which
-// now return 410 Gone.  The @distube/ytdl-core package tracks upstream
-// updates and avoids those obsolete endpoints.  If you see a 410 error
-// coming from miniget when downloading a video, it is almost always due
-// to an outdated version of ytdl-core.
-import ytdl from '@distube/ytdl-core';
-import fs from 'fs';
-import OpenAI from 'openai';
+import { YoutubeTranscript } from 'youtube-transcript';
+// We're no longer downloading audio and using Whisper.  Instead, we fetch
+// the transcript directly from YouTube using an unofficial API.  This
+// approach avoids 410 errors from deprecated YouTube endpoints and the
+// complexity of downloading and converting audio on serverless functions.
+// See https://www.npmjs.com/package/youtube-transcript for details.
 
-// Initialise the OpenAI client against the OpenRouter proxy.
-//
-// OpenRouter exposes an OpenAI‑compatible API but does not use the
-// `/api/v1` prefix. The older code pointed at `https://openrouter.ai/api/v1`,
-// which results in a HTTP 410 from the upstream since that path is not
-// supported. See https://openrouter.ai/docs#quickstart for the correct
-// base URL. Additionally, the model identifier should be the plain
-// `whisper-1` model name instead of the namespaced `openai/whisper-1`.
-const openai = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  // Point to OpenRouter's OpenAI‑compatible endpoint.  According to the
-  // official docs, the base URL should include the `/api/v1` prefix,
-  // e.g. https://openrouter.ai/api/v1.  Removing the `/api` segment
-  // results in a `410 Gone` response, so be sure to include it.
-  baseURL: 'https://openrouter.ai/api/v1',
-});
+// Note: We intentionally omit OpenAI/OpenRouter client usage here.  If you
+// decide to switch back to Whisper audio transcription, restore the
+// OpenAI client initialization and audio download code.
 
 type Data = { transcription: string } | { error: string };
 
@@ -42,32 +23,22 @@ export default async function handler(
   if (!url) {
     return res.status(400).json({ error: 'Falta la URL del video' });
   }
-  const tmpFile = path.join(os.tmpdir(), `${Date.now()}.mp3`);
   try {
-    // Download the audio from the provided URL using ytdl-core
-    const audioChunks: Buffer[] = [];
-    const readable = ytdl(url, { filter: 'audioonly', quality: 'highestaudio' });
-    for await (const chunk of readable) {
-      audioChunks.push(chunk as Buffer);
+    // Currently we only support YouTube video URLs for which transcripts
+    // are available.  The youtube-transcript package accepts either a
+    // full URL or a video ID.  It returns an array of transcript
+    // segments (objects with `text`, `start`, `duration` properties).
+    // We join all text segments together with spaces to form the final
+    // transcription.
+    const transcriptSegments = await YoutubeTranscript.fetchTranscript(url);
+    if (!transcriptSegments || transcriptSegments.length === 0) {
+      return res.status(400).json({ error: 'No se encontró una transcripción para este video.' });
     }
-    const audioBuffer = Buffer.concat(audioChunks);
-    fs.writeFileSync(tmpFile, audioBuffer);
-
-    // Request a transcription using the Whisper model. When using
-    // OpenRouter, the plain `whisper-1` model name must be specified
-    // rather than the namespaced `openai/whisper-1`. See
-    // https://openrouter.ai/docs#whisper for details.
-    const transcription = await openai.audio.transcriptions.create({
-      model: 'whisper-1',
-      file: createReadStream(tmpFile),
-    });
-    return res.status(200).json({ transcription: transcription.text });
+    const transcriptionText = transcriptSegments.map((seg: any) => seg.text).join(' ');
+    return res.status(200).json({ transcription: transcriptionText });
   } catch (error: any) {
     console.error('Error en /api/generate:', error);
-    return res
-      .status(500)
-      .json({ error: error.message || 'Error indefinido' });
-  } finally {
-    if (existsSync(tmpFile)) unlinkSync(tmpFile);
+    // Provide a user‑friendly error message if the fetch fails.
+    return res.status(500).json({ error: error.message || 'Error al obtener la transcripción.' });
   }
 }
