@@ -2,7 +2,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { createReadStream, existsSync, unlinkSync } from 'fs';
 import path from 'path';
 import os from 'os';
-import ytdl from 'ytdl-core';
+// Use the @distube patched version of ytdl-core.  The standard ytdl-core
+// library relies on deprecated YouTube endpoints (get_video_info) which
+// now return 410 Gone.  The @distube/ytdl-core package tracks upstream
+// updates and avoids those obsolete endpoints.  If you see a 410 error
+// coming from miniget when downloading a video, it is almost always due
+// to an outdated version of ytdl-core.
+import ytdl from '@distube/ytdl-core';
 import fs from 'fs';
 import OpenAI from 'openai';
 
