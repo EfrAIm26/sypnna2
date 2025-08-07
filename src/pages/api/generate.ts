@@ -32,25 +32,20 @@ export default async function handler(
   }
   const tmpFile = path.join(os.tmpdir(), `${Date.now()}`);
   try {
-    // Download the media file to a temporary location.  We stream the
-    // response body directly into a writable file.  If the download
-    // fails or the HTTP status is not OK, an error will be thrown.
+    // Download the media file to a temporary location. Instead of piping
+    // a Web stream into a Node stream (which may not be available in all
+    // runtimes, causing Readable.fromWeb to be undefined), we buffer the
+    // entire response using arrayBuffer() and write it to disk.  This
+    // approach is slower for large files but maximises compatibility.
     const fetchResp = await fetch(url);
-    if (!fetchResp.ok || !fetchResp.body) {
+    if (!fetchResp.ok) {
       throw new Error('No se pudo descargar el archivo multimedia');
     }
-    // Convert the Web ReadableStream returned by fetch() into a Node.js
-    // Readable stream.  Node 18+ exposes Readable.fromWeb which accepts
-    // a Web stream and returns a Node stream.  Without this conversion
-    // .pipe() would be undefined on the Web stream.
-    const { Readable } = await import('stream');
-    const nodeStream = Readable.fromWeb(fetchResp.body as any);
-    await new Promise<void>((resolve, reject) => {
-      const dest = fs.createWriteStream(tmpFile);
-      nodeStream.pipe(dest);
-      nodeStream.on('error', reject);
-      dest.on('finish', () => resolve());
-    });
+    // Convert the response body into a Buffer.  The built‑in fetch
+    // polyfill (undici) provides arrayBuffer() which works in Node.
+    const arrayBuffer = await fetchResp.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    await fs.promises.writeFile(tmpFile, buffer);
 
     // Upload the downloaded file to AssemblyAI
     const uploadResp = await fetch('https://api.assemblyai.com/v2/upload', {
