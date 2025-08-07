@@ -48,7 +48,7 @@ export default async function handler(
     await fs.promises.writeFile(tmpFile, buffer);
 
     // Upload the downloaded file to AssemblyAI
-    const uploadResp = await fetch('https://api.assemblyai.com/v2/upload', {
+    const uploadResp = await (fetch as any)('https://api.assemblyai.com/v2/upload', {
       method: 'POST',
       // Node.js fetch requires the duplex option when streaming the body.
       // Without this option the request will throw an error like:
@@ -58,7 +58,7 @@ export default async function handler(
         authorization: apiKey,
       },
       body: fs.createReadStream(tmpFile) as any,
-    });
+    } as any);
     if (!uploadResp.ok) {
       const errText = await uploadResp.text();
       throw new Error(`Error al subir a AssemblyAI: ${errText}`);
