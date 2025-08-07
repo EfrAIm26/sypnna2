@@ -2,7 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { createReadStream, existsSync, unlinkSync } from 'fs';
 import path from 'path';
 import os from 'os';
-import ytdlp from 'yt-dlp-exec';
+import ytdl from 'ytdl-core';
+import fs from 'fs';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
@@ -25,12 +26,15 @@ export default async function handler(
   }
   const tmpFile = path.join(os.tmpdir(), `${Date.now()}.mp3`);
   try {
-    await ytdlp(url, {
-      extractAudio: true,
-      audioFormat: 'mp3',
-      output: tmpFile,
-      noPlaylist: true,
-    });
+    // Download the audio from the provided URL using ytdl-core
+    const audioChunks: Buffer[] = [];
+    const readable = ytdl(url, { filter: 'audioonly', quality: 'highestaudio' });
+    for await (const chunk of readable) {
+      audioChunks.push(chunk as Buffer);
+    }
+    const audioBuffer = Buffer.concat(audioChunks);
+    fs.writeFileSync(tmpFile, audioBuffer);
+
     const transcription = await openai.audio.transcriptions.create({
       model: 'openai/whisper-1',
       file: createReadStream(tmpFile),
