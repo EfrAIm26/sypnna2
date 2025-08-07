@@ -6,9 +6,18 @@ import ytdl from 'ytdl-core';
 import fs from 'fs';
 import OpenAI from 'openai';
 
+// Initialise the OpenAI client against the OpenRouter proxy.
+//
+// OpenRouter exposes an OpenAI‑compatible API but does not use the
+// `/api/v1` prefix. The older code pointed at `https://openrouter.ai/api/v1`,
+// which results in a HTTP 410 from the upstream since that path is not
+// supported. See https://openrouter.ai/docs#quickstart for the correct
+// base URL. Additionally, the model identifier should be the plain
+// `whisper-1` model name instead of the namespaced `openai/whisper-1`.
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
+  // Use the root V1 endpoint. Do **not** include `/api` here.
+  baseURL: 'https://openrouter.ai/v1',
 });
 
 type Data = { transcription: string } | { error: string };
@@ -35,8 +44,12 @@ export default async function handler(
     const audioBuffer = Buffer.concat(audioChunks);
     fs.writeFileSync(tmpFile, audioBuffer);
 
+    // Request a transcription using the Whisper model. When using
+    // OpenRouter, the plain `whisper-1` model name must be specified
+    // rather than the namespaced `openai/whisper-1`. See
+    // https://openrouter.ai/docs#whisper for details.
     const transcription = await openai.audio.transcriptions.create({
-      model: 'openai/whisper-1',
+      model: 'whisper-1',
       file: createReadStream(tmpFile),
     });
     return res.status(200).json({ transcription: transcription.text });
