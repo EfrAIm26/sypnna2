@@ -1,10 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { YoutubeTranscript } from 'youtube-transcript';
-// We're no longer downloading audio and using Whisper.  Instead, we fetch
-// the transcript directly from YouTube using an unofficial API.  This
-// approach avoids 410 errors from deprecated YouTube endpoints and the
-// complexity of downloading and converting audio on serverless functions.
-// See https://www.npmjs.com/package/youtube-transcript for details.
+import { createReadStream, existsSync, unlinkSync } from 'fs';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import ytdlp from 'yt-dlp-exec';
+import OpenAI from 'openai';
+
+// Initialise the OpenAI client against the OpenRouter proxy. We keep the
+// correct baseURL including the `/api/v1` prefix as per the OpenRouter docs.
+const openai = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: 'https://openrouter.ai/api/v1',
+});
 
 // Note: We intentionally omit OpenAI/OpenRouter client usage here.  If you
 // decide to switch back to Whisper audio transcription, restore the
@@ -23,22 +30,35 @@ export default async function handler(
   if (!url) {
     return res.status(400).json({ error: 'Falta la URL del video' });
   }
+  // Create a temporary file path for the downloaded audio.  We'll remove
+  // the file in a finally block after transcription.
+  const tmpFile = path.join(os.tmpdir(), `${Date.now()}.mp3`);
   try {
-    // Currently we only support YouTube video URLs for which transcripts
-    // are available.  The youtube-transcript package accepts either a
-    // full URL or a video ID.  It returns an array of transcript
-    // segments (objects with `text`, `start`, `duration` properties).
-    // We join all text segments together with spaces to form the final
-    // transcription.
-    const transcriptSegments = await YoutubeTranscript.fetchTranscript(url);
-    if (!transcriptSegments || transcriptSegments.length === 0) {
-      return res.status(400).json({ error: 'No se encontró una transcripción para este video.' });
-    }
-    const transcriptionText = transcriptSegments.map((seg: any) => seg.text).join(' ');
-    return res.status(200).json({ transcription: transcriptionText });
+    // Use yt-dlp-exec to download and extract audio from the provided URL.
+    // The options mirror the Python yt-dlp CLI: extract audio, convert to mp3,
+    // use the highest quality available and avoid downloading entire playlists.
+    await ytdlp(url, {
+      extractAudio: true,
+      audioFormat: 'mp3',
+      audioQuality: 0,
+      output: tmpFile,
+      noCheckCertificate: true,
+      noWarnings: true,
+      preferFreeFormats: true,
+      playlistItems: 'no-playlist',
+    });
+
+    // Read the audio file and send it to Whisper for transcription.  When
+    // using OpenRouter as a proxy, specify the plain model name `whisper-1`.
+    const transcription = await openai.audio.transcriptions.create({
+      model: 'whisper-1',
+      file: createReadStream(tmpFile),
+    });
+    return res.status(200).json({ transcription: transcription.text });
   } catch (error: any) {
     console.error('Error en /api/generate:', error);
-    // Provide a user‑friendly error message if the fetch fails.
-    return res.status(500).json({ error: error.message || 'Error al obtener la transcripción.' });
+    return res.status(500).json({ error: error.message || 'Error indefinido' });
+  } finally {
+    if (existsSync(tmpFile)) unlinkSync(tmpFile);
   }
 }
