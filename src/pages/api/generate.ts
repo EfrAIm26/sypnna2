@@ -22,8 +22,11 @@ import OpenAI from 'openai';
 // `whisper-1` model name instead of the namespaced `openai/whisper-1`.
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
-  // Use the root V1 endpoint. Do **not** include `/api` here.
-  baseURL: 'https://openrouter.ai/v1',
+  // Point to OpenRouter's OpenAI‑compatible endpoint.  According to the
+  // official docs, the base URL should include the `/api/v1` prefix,
+  // e.g. https://openrouter.ai/api/v1.  Removing the `/api` segment
+  // results in a `410 Gone` response, so be sure to include it.
+  baseURL: 'https://openrouter.ai/api/v1',
 });
 
 type Data = { transcription: string } | { error: string };
